@@ -64,9 +64,9 @@ from typing import Any, Dict, Set
 import azure.core.exceptions
 import azure.servicebus.exceptions
 import isodate
-from azure.servicebus import (ServiceBusClient, ServiceBusMessage,
-                              ServiceBusReceiveMode, ServiceBusReceiver,
-                              ServiceBusSender)
+from azure.servicebus import (AutoLockRenewer, ServiceBusClient,
+                              ServiceBusMessage, ServiceBusReceiveMode,
+                              ServiceBusReceiver, ServiceBusSender)
 from azure.servicebus.management import ServiceBusAdministrationClient
 
 try:
@@ -117,6 +117,7 @@ class Channel(virtual.Channel):
     default_uamqp_keep_alive_interval: int = 30
     # number of retries (is the default from service bus repo)
     default_retry_total: int = 3
+    default_max_lock_renewal_duration: int = 300
     # exponential backoff factor (is the default from service bus repo)
     default_retry_backoff_factor: float = 0.8
     # Max time to backoff (is the default from service bus repo)
@@ -198,9 +199,15 @@ class Channel(virtual.Channel):
         cache_key = queue_cache_key or queue
         queue_obj = self._queue_cache.get(cache_key, None)
         if queue_obj is None or queue_obj.receiver is None:
+            auto_lock_renewer = None
+            if self.use_lock_renewal and recv_mode == ServiceBusReceiveMode.PEEK_LOCK:
+                auto_lock_renewer = AutoLockRenewer(
+                    max_lock_renewal_duration=self.max_lock_renewal_duration)
+
             receiver = self.queue_service.get_queue_receiver(
                 queue_name=queue, receive_mode=recv_mode,
-                keep_alive=self.uamqp_keep_alive_interval)
+                keep_alive=self.uamqp_keep_alive_interval,
+                auto_lock_renewer=auto_lock_renewer)
             queue_obj = self._add_queue_to_cache(cache_key, receiver=receiver)
         return queue_obj
 
@@ -394,6 +401,15 @@ class Channel(virtual.Channel):
     def wait_time_seconds(self) -> int:
         return self.transport_options.get('wait_time_seconds',
                                           self.default_wait_time_seconds)
+
+    @cached_property
+    def max_lock_renewal_duration(self) -> int:
+        return self.transport_options.get('max_lock_renewal_duration',
+                                          self.default_max_lock_renewal_duration)
+
+    @cached_property
+    def use_lock_renewal(self) -> int:
+        return self.transport_options.get('use_lock_renewal', False)
 
     @cached_property
     def peek_lock_seconds(self) -> int:
